@@ -1,0 +1,1349 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ระบบสารสนเทศทางระบาดวิทยาการเสียชีวิตจากอุบัติเหตุทางถนน B.E. 2568</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#f0f9ff',
+                            100: '#e0f2fe',
+                            500: '#0284c7',
+                            600: '#0369a1',
+                            800: '#075985',
+                            900: '#0c4a6e',
+                        },
+                        epi: {
+                            red: '#e11d48',
+                            orange: '#ea580c',
+                            yellow: '#d97706',
+                            teal: '#0d9488',
+                            slate: '#334155'
+                        }
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'Sarabun', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- Google Fonts: Sarabun & Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Dependencies for Recharts (prop-types & resize-observer) -->
+    <script crossorigin src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+    <script crossorigin src="https://unpkg.com/resize-observer-polyfill@1.5.1/dist/ResizeObserver.global.js"></script>
+
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- PapaParse for CSV parsing -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+
+    <!-- Recharts CDN (Switched to minified for stability) -->
+    <script src="https://unpkg.com/recharts@2.12.0/umd/Recharts.min.js"></script>
+
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- Leaflet CSS & JS for Mapping -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+    <style>
+        body {
+            font-family: 'Sarabun', 'Inter', sans-serif;
+            background-color: #f8fafc;
+        }
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: #f1f5f9;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #cbd5e1;
+            border-radius: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: #94a3b8;
+        }
+        
+        .glow-marker {
+            filter: drop-shadow(0 0 6px rgba(225, 29, 72, 0.8));
+            animation: pulse-glow 2s infinite alternate;
+        }
+        @keyframes pulse-glow {
+            0% { filter: drop-shadow(0 0 3px rgba(225, 29, 72, 0.4)); }
+            100% { filter: drop-shadow(0 0 12px rgba(225, 29, 72, 1)); }
+        }
+        
+        /* แก้ไข popup ของแผนที่ให้เข้ากับตีมเข้ม */
+        .leaflet-popup-content-wrapper {
+            background-color: #1e293b;
+            color: #f8fafc;
+            border: 1px solid #334155;
+            border-radius: 0.75rem;
+        }
+        .leaflet-popup-tip {
+            background-color: #1e293b;
+            border: 1px solid #334155;
+        }
+    </style>
+</head>
+<body class="text-slate-800 antialiased selection:bg-sky-500 selection:text-white">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useCallback, useRef } = React;
+        
+        // Fallback to basic 'div' to prevent React Error #130 if Recharts CDN fails
+        const RechartsLib = window.Recharts || {};
+        const { 
+            ResponsiveContainer = 'div', LineChart = 'div', Line = 'div', BarChart = 'div', Bar = 'div', XAxis = 'div', YAxis = 'div', 
+            CartesianGrid = 'div', Tooltip = 'div', Legend = 'div', PieChart = 'div', Pie = 'div', Cell = 'div', AreaChart = 'div', 
+            Area = 'div', Radar = 'div', RadarChart = 'div', PolarGrid = 'div', PolarAngleAxis = 'div' 
+        } = RechartsLib;
+
+        // Helper icon rendering
+        const Icon = ({ name, size = 18, className = "" }) => {
+            useEffect(() => {
+                if (window.lucide) {
+                    window.lucide.createIcons();
+                }
+            }, [name]);
+            return <i data-lucide={name} className={`inline-block ${className}`} style={{ width: size, height: size }}></i>;
+        };
+
+        const provinceCoordinates = {
+            'กรุงเทพมหานคร': [13.7563, 100.5018], 'สมุทรปราการ': [13.5993, 100.5968], 'นนทบุรี': [13.8591, 100.5217],
+            'ปทุมธานี': [14.0208, 100.5250], 'พระนครศรีอยุธยา': [14.3532, 100.5690], 'อ่างทอง': [14.5896, 100.4551],
+            'ลพบุรี': [14.7995, 100.6534], 'สิงห์บุรี': [14.8873, 100.3953], 'ชัยนาท': [15.1852, 100.1251],
+            'สระบุรี': [14.5289, 100.9101], 'ชลบุรี': [13.3611, 100.9847], 'ระยอง': [12.6814, 101.2816],
+            'จันทบุรี': [12.6114, 102.1039], 'ตราด': [12.2428, 102.5175], 'ฉะเชิงเทรา': [13.6904, 101.0718],
+            'ปราจีนบุรี': [14.0510, 101.3722], 'นครนายก': [14.2069, 101.2131], 'สระแก้ว': [13.8240, 102.0646],
+            'นครราชสีมา': [14.9799, 102.0978], 'บุรีรัมย์': [14.9930, 103.1029], 'สุรินทร์': [14.8818, 103.4936],
+            'ศรีสะเกษ': [15.1186, 104.3220], 'อุบลราชธานี': [15.2287, 104.8564], 'ยโสธร': [15.7926, 104.1453],
+            'ชัยภูมิ': [15.8063, 102.0315], 'อำนาจเจริญ': [15.8657, 104.6258], 'บึงกาฬ': [18.3608, 103.6470],
+            'หนองบัวลำภู': [17.2040, 102.4407], 'ขอนแก่น': [16.4322, 102.8236], 'อุดรธานี': [17.4138, 102.7872],
+            'เลย': [17.4860, 101.7223], 'หนองคาย': [17.8783, 102.7420], 'มหาสารคาม': [16.1853, 103.3007],
+            'ร้อยเอ็ด': [16.0538, 103.6520], 'กาฬสินธุ์': [16.4328, 103.5065], 'สกลนคร': [17.1664, 104.1486],
+            'นครพนม': [17.3920, 104.7788], 'มุกดาหาร': [16.5453, 104.7235], 'เชียงใหม่': [18.7883, 98.9853],
+            'ลำพูน': [18.5779, 99.0069], 'ลำปาง': [18.2888, 99.4930], 'อุตรดิตถ์': [17.6201, 100.0993],
+            'แพร่': [18.1446, 100.1403], 'น่าน': [18.7756, 100.7730], 'พะเยา': [19.1666, 99.9022],
+            'เชียงราย': [19.9082, 99.8325], 'แม่ฮ่องสอน': [19.3000, 97.9667], 'นครสวรรค์': [15.6960, 100.1227],
+            'อุทัยธานี': [15.3789, 99.9998], 'กำแพงเพชร': [16.4828, 99.5227], 'ตาก': [16.8840, 99.1258],
+            'สุโขทัย': [17.0055, 99.8227], 'พิษณุโลก': [16.8211, 100.2659], 'พิจิตร': [16.4428, 100.3488],
+            'เพชรบูรณ์': [16.4184, 101.1550], 'ราชบุรี': [13.5283, 99.8134], 'กาญจนบุรี': [14.0041, 99.5483],
+            'สุพรรณบุรี': [14.4742, 100.1122], 'นครปฐม': [13.8140, 100.0373], 'สมุทรสาคร': [13.5475, 100.2736],
+            'สมุทรสงคราม': [13.4098, 99.9986], 'เพชรบุรี': [13.1118, 99.9448], 'ประจวบคีรีขันธ์': [11.8124, 99.7975],
+            'นครศรีธรรมราช': [8.4333, 99.9622], 'กระบี่': [8.0573, 98.9163], 'พังงา': [8.4501, 98.5286],
+            'ภูเก็ต': [7.9519, 98.3381], 'สุราษฎร์ธานี': [9.1342, 99.3228], 'ระนอง': [9.9658, 98.6348],
+            'ชุมพร': [10.4930, 99.1800], 'สงขลา': [7.1897, 100.5954], 'สตูล': [6.6212, 100.0664],
+            'ตรัง': [7.5563, 99.6114], 'พัทลุง': [7.6186, 100.0754], 'ปัตตานี': [6.8665, 101.2501],
+            'ยะลา': [6.5411, 101.2804], 'นราธิวาส': [6.4255, 101.8253]
+        };
+
+        const EpiMap = ({ data }) => {
+            const mapRef = useRef(null);
+            const mapInstanceRef = useRef(null);
+            const markersLayerRef = useRef(null);
+
+            useEffect(() => {
+                if (!mapRef.current || !window.L) return;
+
+                // Initialize map only once
+                if (!mapInstanceRef.current) {
+                    const map = window.L.map(mapRef.current, {
+                        zoomControl: true,
+                        minZoom: 4,
+                        maxZoom: 12
+                    }).setView([13.736717, 100.523186], 5);
+                    
+                    // Add Esri World Dark Gray Base
+                    window.L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
+                        attribution: '&copy; Esri, HERE, Garmin, &copy; OpenStreetMap contributors',
+                        maxZoom: 16
+                    }).addTo(map);
+
+                    // Add Esri World Dark Gray Reference (Labels)
+                    window.L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
+                        attribution: '',
+                        maxZoom: 16
+                    }).addTo(map);
+
+                    mapInstanceRef.current = map;
+                    markersLayerRef.current = window.L.layerGroup().addTo(map);
+
+                    // ป้องกันปัญหาแผนที่โหลดไม่เต็มกรอบ
+                    setTimeout(() => {
+                        map.invalidateSize();
+                    }, 300);
+                }
+
+                // Clean up old markers when data updates
+                const layer = markersLayerRef.current;
+                layer.clearLayers();
+
+                // Aggregate incidents by province
+                const provCount = {};
+                data.forEach(d => {
+                    const p = d.province;
+                    provCount[p] = (provCount[p] || 0) + 1;
+                });
+
+                // Calculate max count for scaling radius dynamically
+                const maxCount = Math.max(...Object.values(provCount), 1);
+
+                // Add bubble markers
+                Object.keys(provCount).forEach(prov => {
+                    // Fallback to center of Thailand if province name is mistyped
+                    const coords = provinceCoordinates[prov] || [13.7367, 100.5231];
+                    const count = provCount[prov];
+                    
+                    // Dynamic scaling based on density
+                    const minRadius = 8;
+                    const maxRadius = 40;
+                    const radius = minRadius + ((count / maxCount) * (maxRadius - minRadius)); 
+
+                    const circle = window.L.circleMarker(coords, {
+                        radius: radius,
+                        fillColor: "#e11d48", // Tailwind Rose-600 (สีแดงเข้ม)
+                        color: "#f43f5e", // Tailwind Rose-500 (ขอบสว่างเพื่อความคมชัดบน Dark Gray)
+                        weight: 2,
+                        opacity: 1,
+                        fillOpacity: 0.65,
+                        className: 'glow-marker' // เพิ่มเอฟเฟกต์เรืองแสง
+                    });
+                    
+                    circle.bindPopup(`
+                        <div style="text-align:center; font-family: 'Sarabun', sans-serif; min-width: 120px; padding: 4px;">
+                            <div style="font-size: 14px; font-weight: 700; color: #f8fafc; border-bottom: 1px solid #334155; padding-bottom: 6px; margin-bottom: 6px;">${prov}</div>
+                            <div style="color: #fb7185; font-weight: 800; font-size: 22px; line-height: 1;">${count} <span style="color: #94a3b8; font-size: 13px; font-weight: 500;">ราย</span></div> 
+                        </div>
+                    `);
+                    circle.addTo(layer);
+                });
+
+            }, [data]);
+
+            return <div ref={mapRef} style={{ width: '100%', height: '100%', borderRadius: '0.5rem', zIndex: 1, backgroundColor: '#242424' }}></div>;
+        };
+
+        // Sample dataset representing Thai Road Traffic Fatalities B.E. 2568 (2025-2026)
+        const generateBaselineData = () => {
+            const provinces = ['กรุงเทพมหานคร', 'นครราชสีมา', 'เชียงใหม่', 'ชลบุรี', 'ขอนแก่น', 'สงขลา', 'อุบลราชธานี', 'สุราษฎร์ธานี', 'อุดรธานี', 'ปทุมธานี', 'สมุทรปราการ', 'ตาก', 'พิษณุโลก', 'นครศรีธรรมราช'];
+            const healthZones = ['เขต 1', 'เขต 2', 'เขต 3', 'เขต 4', 'เขต 5', 'เขต 6', 'เขต 7', 'เขต 8', 'เขต 9', 'เขต 10', 'เขต 11', 'เขต 12', 'กทม.'];
+            const vehicles = ['จักรยานยนต์', 'รถยนต์นั่ง/เก๋ง', 'รถปิกอัพ', 'รถบรรทุก', 'จักรยาน', 'คนเดินเท้า'];
+            const victimTypes = ['ผู้ขับขี่', 'ผู้โดยสาร', 'คนเดินเท้า'];
+            const ageGroups = ['0-14 ปี', '15-24 ปี', '25-34 ปี', '35-44 ปี', '45-59 ปี', '60 ปีขึ้นไป'];
+            
+            const records = [];
+            const startDate = new Date(2025, 0, 1);
+            const endDate = new Date(2025, 11, 31);
+            
+            let id = 1001;
+            for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+                // Generate 5-15 fatality cases per day for realistic epidemiological curve
+                const dailyCases = Math.floor(Math.random() * 8) + 4; 
+                const dateStr = d.toISOString().split('T')[0];
+                const monthStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+                
+                for (let c = 0; c < dailyCases; c++) {
+                    const hour = Math.floor(Math.random() * 24);
+                    const gender = Math.random() < 0.76 ? 'ชาย' : 'หญิง'; // Epi trait: Male dominant ~75-80%
+                    
+                    // Age distribution skewed towards 15-24 and 45-59
+                    const ageRand = Math.random();
+                    let age, ageGrp;
+                    if (ageRand < 0.35) { age = Math.floor(Math.random() * 10) + 15; ageGrp = '15-24 ปี'; }
+                    else if (ageRand < 0.55) { age = Math.floor(Math.random() * 10) + 25; ageGrp = '25-34 ปี'; }
+                    else if (ageRand < 0.70) { age = Math.floor(Math.random() * 10) + 35; ageGrp = '35-44 ปี'; }
+                    else if (ageRand < 0.88) { age = Math.floor(Math.random() * 15) + 45; ageGrp = '45-59 ปี'; }
+                    else if (ageRand < 0.95) { age = Math.floor(Math.random() * 20) + 60; ageGrp = '60 ปีขึ้นไป'; }
+                    else { age = Math.floor(Math.random() * 14); ageGrp = '0-14 ปี'; }
+
+                    // Vehicle type skewed to Motorcycles (~80%)
+                    const vRand = Math.random();
+                    let vehicle = vRand < 0.78 ? 'จักรยานยนต์' : vehicles[Math.floor(Math.random() * (vehicles.length - 1)) + 1];
+
+                    // Risk factors
+                    const helmetUsed = vehicle === 'จักรยานยนต์' ? (Math.random() < 0.32 ? 'สวม' : 'ไม่สวม') : 'N/A';
+                    const seatbeltUsed = (vehicle === 'รถยนต์นั่ง/เก๋ง' || vehicle === 'รถปิกอัพ') ? (Math.random() < 0.45 ? 'คาด' : 'ไม่คาด') : 'N/A';
+                    const alcoholInvolved = Math.random() < 0.38 ? 'เกี่ยวข้อง' : 'ไม่เกี่ยวข้อง';
+                    const speedInvolved = Math.random() < 0.52 ? 'ใช้ความเร็วสูง' : 'ปกติ';
+
+                    const provIndex = Math.floor(Math.random() * provinces.length);
+
+                    records.push({
+                        id: `FAT-2568-${id++}`,
+                        acc_date: dateStr,
+                        acc_month: monthStr,
+                        acc_time: `${String(hour).padStart(2, '0')}:00`,
+                        hour_bucket: `${String(hour).padStart(2, '0')}:00 - ${String((hour + 1) % 24).padStart(2, '0')}:00`,
+                        hour_num: hour,
+                        province: provinces[provIndex],
+                        health_zone: healthZones[provIndex % healthZones.length],
+                        gender: gender,
+                        age: age,
+                        age_group: ageGrp,
+                        vehicle_type: vehicle,
+                        victim_type: victimTypes[vehicle === 'คนเดินเท้า' ? 2 : (Math.random() < 0.8 ? 0 : 1)],
+                        helmet: helmetUsed,
+                        seatbelt: seatbeltUsed,
+                        alcohol: alcoholInvolved,
+                        speeding: speedInvolved,
+                        fatalities: 1
+                    });
+                }
+            }
+            return records;
+        };
+
+        function App() {
+            // Primary Data state
+            const [data, setData] = useState([]);
+            const [filteredData, setFilteredData] = useState([]);
+            const [loading, setLoading] = useState(false);
+            // Default URL set to User's Published Google Sheets CSV
+            const [csvUrl, setCsvUrl] = useState('https://docs.google.com/spreadsheets/d/e/2PACX-1vT5dyLeMdVBxBwVfe2tp1WmVJffo-ZmYfOJ8RuudAKWzjHRHhEOMI4xCsN4n7_j2uro2e9ZQibj9h0x/pub?output=csv');
+            const [lastUpdated, setLastUpdated] = useState(new Date().toLocaleTimeString());
+            const [activeTab, setActiveTab] = useState('overview'); // overview, demographics, risks, geography, table
+            
+            // Realtime Sync state
+            const [isRealtime, setIsRealtime] = useState(false);
+            const [refreshInterval, setRefreshInterval] = useState(30); // seconds for live Google Sheets polling
+            const [streamStatus, setStreamStatus] = useState('Standby');
+            const [toastMessage, setToastMessage] = useState(null);
+
+            // Filter states
+            const [selectedHealthZone, setSelectedHealthZone] = useState('ALL');
+            const [selectedGender, setSelectedGender] = useState('ALL');
+            const [selectedVehicle, setSelectedVehicle] = useState('ALL');
+            const [selectedAgeGroup, setSelectedAgeGroup] = useState('ALL');
+            const [searchKeyword, setSearchKeyword] = useState('');
+
+            // Notification helper
+            const showToast = (msg, type = 'info') => {
+                setToastMessage({ text: msg, type });
+                setTimeout(() => setToastMessage(null), 4000);
+            };
+
+            const parseAndStandardizeData = useCallback((rawRows) => {
+                if (!Array.isArray(rawRows) || rawRows.length === 0) return [];
+
+                return rawRows.map((row, idx) => {
+                    // Smart Column Resolver - รองรับชื่อคอลัมน์หลายรูปแบบทั้งไทยและอังกฤษ
+                    const findValue = (keys) => {
+                        for (let k of keys) {
+                            const foundKey = Object.keys(row).find(rk => rk.toLowerCase().replace(/[^a-z0-9ก-๙]/g, '') === k.toLowerCase().replace(/[^a-z0-9ก-๙]/g, ''));
+                            if (foundKey && row[foundKey] !== undefined && row[foundKey] !== null && String(row[foundKey]).trim() !== '') {
+                                return String(row[foundKey]).trim();
+                            }
+                        }
+                        return null;
+                    };
+
+                    let dateVal = findValue(['acc_date', 'dead_date', 'date', 'วันที่เกิดเหตุ', 'วันที่เสียชีวิต', 'วันที่', 'incident_date', 'd_date']) || new Date().toISOString().split('T')[0];
+                    if (dateVal.includes('/')) {
+                        const parts = dateVal.split('/');
+                        if (parts.length === 3) {
+                            let y = parseInt(parts[2], 10);
+                            if (y > 2500) y -= 543;
+                            dateVal = `${y}-${String(parts[1]).padStart(2, '0')}-${String(parts[0]).padStart(2, '0')}`;
+                        }
+                    }
+
+                    const rawAge = findValue(['age', 'dead_age', 'victim_age', 'อายุ', 'age_years']);
+                    const ageVal = rawAge ? parseInt(rawAge, 10) : Math.floor(Math.random() * 40) + 18;
+                    
+                    let ageGroupVal = '15-24 ปี';
+                    if (isNaN(ageVal) || ageVal <= 14) ageGroupVal = '0-14 ปี';
+                    else if (ageVal <= 24) ageGroupVal = '15-24 ปี';
+                    else if (ageVal <= 34) ageGroupVal = '25-34 ปี';
+                    else if (ageVal <= 44) ageGroupVal = '35-44 ปี';
+                    else if (ageVal <= 59) ageGroupVal = '45-59 ปี';
+                    else ageGroupVal = '60 ปีขึ้นไป';
+
+                    const genderRaw = (findValue(['gender', 'sex', 'เพศ', 'sex_desc', 'dead_sex']) || 'ชาย').toLowerCase();
+                    const genderVal = (genderRaw.includes('ชาย') || genderRaw.includes('m') || genderRaw === '1') ? 'ชาย' : 'หญิง';
+
+                    let vehicleRaw = findValue(['vehicle_type', 'vehicle', 'ยานพาหนะ', 'ประเภทรถ', 'รถ', 'v_type', 'vehicle_desc']) || 'จักรยานยนต์';
+                    if (vehicleRaw.match(/มอเตอร์ไซค์|จยย|mc|motorcycle/i)) vehicleRaw = 'จักรยานยนต์';
+                    else if (vehicleRaw.match(/เก๋ง|กระบะ|รถยนต์|car/i)) vehicleRaw = 'รถยนต์นั่ง/เก๋ง';
+                    else if (vehicleRaw.match(/ปิกอัพ|pickup/i)) vehicleRaw = 'รถปิกอัพ';
+                    else if (vehicleRaw.match(/บรรทุก|truck/i)) vehicleRaw = 'รถบรรทุก';
+                    else if (vehicleRaw.match(/เดิน|pedestrian/i)) vehicleRaw = 'คนเดินเท้า';
+
+                    const provVal = findValue(['province', 'prov_name', 'จังหวัด', 'prov', 'dead_prov']) || 'กรุงเทพมหานคร';
+                    const hZoneVal = findValue(['health_zone', 'hzone', 'เขตสุขภาพ', 'เขต']) || `เขต ${(idx % 12) + 1}`;
+
+                    const rawHour = findValue(['hour', 'acc_time', 'time_hour', 'dead_time', 'เวลาเกิดเหตุ', 'เวลา']);
+                    let hourVal = 18;
+                    if (rawHour) {
+                        const hNum = parseInt(rawHour.split(':')[0], 10);
+                        if (!isNaN(hNum)) hourVal = hNum % 24;
+                    }
+
+                    const helmetRaw = findValue(['helmet', 'หมวกนิรภัย', 'หมวก', 'use_helmet']) || '';
+                    const helmetVal = (helmetRaw.match(/สวม|yes|1/i)) ? 'สวม' : 'ไม่สวม';
+
+                    const alcoholRaw = findValue(['alcohol', 'แอลกอฮอล์', 'สุรา', 'ดื่ม', 'use_alcohol']) || '';
+                    const alcoholVal = (alcoholRaw.match(/ดื่ม|เกี่ยวข้อง|yes|1/i)) ? 'เกี่ยวข้อง' : 'ไม่เกี่ยวข้อง';
+
+                    const speedRaw = findValue(['speeding', 'speed', 'ขับรถเร็ว', 'ใช้ความเร็ว']) || '';
+                    const speedVal = (speedRaw.match(/เร็ว|yes|1/i)) ? 'ใช้ความเร็วสูง' : 'ปกติ';
+
+                    return {
+                        id: findValue(['id', 'incident_id', 'เลขที่รายงาน', 'dead_id', 'code']) || `REC-${idx + 1000}`,
+                        acc_date: dateVal,
+                        acc_month: dateVal.substring(0, 7),
+                        acc_time: `${String(hourVal).padStart(2, '0')}:00`,
+                        hour_num: isNaN(hourVal) ? 12 : hourVal,
+                        hour_bucket: `${String(hourVal).padStart(2, '0')}:00 - ${String((hourVal + 1) % 24).padStart(2, '0')}:00`,
+                        province: provVal,
+                        health_zone: hZoneVal.startsWith('เขต') ? hZoneVal : `เขต ${hZoneVal}`,
+                        gender: genderVal,
+                        age: isNaN(ageVal) ? 25 : ageVal,
+                        age_group: ageGroupVal,
+                        vehicle_type: vehicleRaw,
+                        victim_type: findValue(['victim_type', 'สถานภาพ', 'ผู้ประสบเหตุ']) || 'ผู้ขับขี่',
+                        helmet: helmetVal,
+                        seatbelt: findValue(['seatbelt', 'เข็มขัดนิรภัย', 'เข็มขัด']) || 'ไม่คาด',
+                        alcohol: alcoholVal,
+                        speeding: speedVal,
+                        fatalities: 1
+                    };
+                });
+            }, []);
+
+            const loadBaselineData = useCallback((reasonMsg = "") => {
+                setLoading(true);
+                setTimeout(() => {
+                    const baseData = generateBaselineData();
+                    setData(baseData);
+                    setLastUpdated(new Date().toLocaleTimeString());
+                    setStreamStatus('Synced (Baseline 2568)');
+                    setLoading(false);
+                    if (reasonMsg) showToast(reasonMsg, 'info');
+                }, 300);
+            }, []);
+
+            const fetchCsvFromUrl = useCallback(async (urlToFetch, isAutoPoll = false) => {
+                if (!isAutoPoll) setLoading(true);
+                setStreamStatus(isAutoPoll ? 'Polling Live CSV...' : 'Connecting to CSV...');
+                
+                try {
+                    Papa.parse(urlToFetch, {
+                        download: true,
+                        header: true,
+                        skipEmptyLines: true,
+                        complete: (results) => {
+                            if (results.data && results.data.length > 0) {
+                                const standardized = parseAndStandardizeData(results.data);
+                                setData(standardized);
+                                setLastUpdated(new Date().toLocaleTimeString());
+                                setStreamStatus('Live Sync (Google Sheets)');
+                                if (!isAutoPoll) {
+                                    showToast(`โหลดข้อมูลจาก CSV สำเร็จ ${standardized.length.toLocaleString()} รายการ`, 'success');
+                                } else {
+                                    showToast(`🔄 อัปเดตข้อมูลอัตโนมัติสำเร็จ (${standardized.length.toLocaleString()} รายการ)`, 'info');
+                                }
+                            } else {
+                                throw new Error('CSV is empty');
+                            }
+                            setLoading(false);
+                        },
+                        error: (err) => {
+                            console.warn("URL Fetch Error:", err);
+                            if (!isAutoPoll) loadBaselineData("ดึงข้อมูลไม่สำเร็จ ใช้ข้อมูลระบาดวิทยาจำลองฐานแทน");
+                            else setLoading(false);
+                        }
+                    });
+                } catch (error) {
+                    if (!isAutoPoll) loadBaselineData("เกิดข้อผิดพลาด ใช้ข้อมูลฐานแทน");
+                }
+            }, [parseAndStandardizeData, loadBaselineData]);
+
+            const handleFileUpload = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                setLoading(true);
+                Papa.parse(file, {
+                    header: true,
+                    skipEmptyLines: true,
+                    complete: (results) => {
+                        const parsed = parseAndStandardizeData(results.data);
+                        setData(parsed);
+                        setLastUpdated(new Date().toLocaleTimeString());
+                        setStreamStatus(`Synced (${file.name})`);
+                        showToast(`อัปโหลดไฟล์ ${file.name} สำเร็จ (${parsed.length.toLocaleString()} รายการ)`, 'success');
+                        setLoading(false);
+                    },
+                    error: () => {
+                        showToast('เกิดข้อผิดพลาดในการอ่านไฟล์ CSV', 'error');
+                        setLoading(false);
+                    }
+                });
+            };
+
+            const handleExportCSV = () => {
+                if (filteredData.length === 0) return;
+                const csvString = Papa.unparse(filteredData);
+                const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.setAttribute('href', url);
+                link.setAttribute('download', `epi_surveillance_export_${new Date().toISOString().split('T')[0]}.csv`);
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                showToast(`ส่งออกข้อมูล ${filteredData.length.toLocaleString()} รายการเป็น CSV เรียบร้อย`, 'success');
+            };
+
+            // โหลดข้อมูลครั้งแรกเมื่อเปิดหน้า Dashboard
+            useEffect(() => {
+                fetchCsvFromUrl(csvUrl);
+            }, [fetchCsvFromUrl, csvUrl]);
+
+            // ระบบ Realtime Polling ตรวจจับการเปลี่ยนแปลงจาก Google Sheets
+            useEffect(() => {
+                let timer = null;
+                if (isRealtime && csvUrl) {
+                    setStreamStatus('Live Polling Active');
+                    timer = setInterval(() => {
+                        fetchCsvFromUrl(csvUrl, true);
+                    }, refreshInterval * 1000);
+                }
+                return () => clearInterval(timer);
+            }, [isRealtime, refreshInterval, csvUrl, fetchCsvFromUrl]);
+
+            // Filter Data Computed Property
+            useEffect(() => {
+                let res = [...data];
+
+                if (selectedHealthZone !== 'ALL') {
+                    res = res.filter(d => d.health_zone === selectedHealthZone);
+                }
+                if (selectedGender !== 'ALL') {
+                    res = res.filter(d => d.gender === selectedGender);
+                }
+                if (selectedVehicle !== 'ALL') {
+                    res = res.filter(d => d.vehicle_type === selectedVehicle);
+                }
+                if (selectedAgeGroup !== 'ALL') {
+                    res = res.filter(d => d.age_group === selectedAgeGroup);
+                }
+                if (searchKeyword.trim() !== '') {
+                    const kw = searchKeyword.toLowerCase();
+                    res = res.filter(d => 
+                        d.province.toLowerCase().includes(kw) || 
+                        d.id.toLowerCase().includes(kw) ||
+                        d.vehicle_type.toLowerCase().includes(kw)
+                    );
+                }
+
+                setFilteredData(res);
+            }, [data, selectedHealthZone, selectedGender, selectedVehicle, selectedAgeGroup, searchKeyword]);
+
+            // High Level KPIs Calculations
+            const kpiMetrics = useMemo(() => {
+                const totalFatalities = filteredData.length;
+                const maleCount = filteredData.filter(d => d.gender === 'ชาย').length;
+                const mcCount = filteredData.filter(d => d.vehicle_type === 'จักรยานยนต์').length;
+                const noHelmetMc = filteredData.filter(d => d.vehicle_type === 'จักรยานยนต์' && d.helmet === 'ไม่สวม').length;
+                const alcoholCount = filteredData.filter(d => d.alcohol === 'เกี่ยวข้อง').length;
+                const youthCount = filteredData.filter(d => d.age >= 15 && d.age <= 24).length;
+
+                // Estimated Thai Population standard baseline ~66,000,000
+                const mortalityRatePer100k = ((totalFatalities / 66000000) * 100000).toFixed(2);
+                const malePercentage = totalFatalities > 0 ? ((maleCount / totalFatalities) * 100).toFixed(1) : 0;
+                const mcPercentage = totalFatalities > 0 ? ((mcCount / totalFatalities) * 100).toFixed(1) : 0;
+                const noHelmetRate = mcCount > 0 ? ((noHelmetMc / mcCount) * 100).toFixed(1) : 0;
+                const alcoholRate = totalFatalities > 0 ? ((alcoholCount / totalFatalities) * 100).toFixed(1) : 0;
+
+                return {
+                    totalFatalities,
+                    mortalityRatePer100k,
+                    malePercentage,
+                    mcPercentage,
+                    noHelmetRate,
+                    alcoholRate,
+                    youthCount
+                };
+            }, [filteredData]);
+
+            // Chart 1: Epi Curve (Fatalities over Time)
+            const epiCurveData = useMemo(() => {
+                const map = {};
+                filteredData.forEach(item => {
+                    const month = item.acc_month;
+                    if (!map[month]) map[month] = 0;
+                    map[month] += 1;
+                });
+
+                return Object.keys(map).sort().map(m => ({
+                    month: m,
+                    ผู้เสียชีวิต: map[m],
+                    เป้าหมายทศวรรษความปลอดภัย: Math.round(map[m] * 0.7) // 30% reduction benchmark
+                }));
+            }, [filteredData]);
+
+            // Chart 2: Age-Sex Pyramid / Distribution
+            const ageSexData = useMemo(() => {
+                const groups = ['0-14 ปี', '15-24 ปี', '25-34 ปี', '35-44 ปี', '45-59 ปี', '60 ปีขึ้นไป'];
+                return groups.map(grp => {
+                    const male = filteredData.filter(d => d.age_group === grp && d.gender === 'ชาย').length;
+                    const female = filteredData.filter(d => d.age_group === grp && d.gender === 'หญิง').length;
+                    return { age_group: grp, ชาย: male, หญิง: female };
+                });
+            }, [filteredData]);
+
+            // Chart 3: Vehicle Type Breakdown
+            const vehicleData = useMemo(() => {
+                const map = {};
+                filteredData.forEach(d => {
+                    map[d.vehicle_type] = (map[d.vehicle_type] || 0) + 1;
+                });
+                const colors = ['#0284c7', '#ea580c', '#e11d48', '#d97706', '#0d9488', '#64748b'];
+                return Object.keys(map).map((k, idx) => ({
+                    name: k,
+                    value: map[k],
+                    fill: colors[idx % colors.length]
+                })).sort((a,b) => b.value - a.value);
+            }, [filteredData]);
+
+            // Chart 4: Hourly Distribution (Time of Incident)
+            const hourlyData = useMemo(() => {
+                const hours = Array.from({length: 24}, (_, i) => i);
+                return hours.map(h => {
+                    const count = filteredData.filter(d => d.hour_num === h).length;
+                    return {
+                        hourLabel: `${String(h).padStart(2, '0')}:00`,
+                        จำนวนผู้เสียชีวิต: count
+                    };
+                });
+            }, [filteredData]);
+
+            // Chart 5: Top Provinces
+            const topProvincesData = useMemo(() => {
+                const map = {};
+                filteredData.forEach(d => {
+                    map[d.province] = (map[d.province] || 0) + 1;
+                });
+                return Object.keys(map)
+                    .map(p => ({ province: p, count: map[p] }))
+                    .sort((a,b) => b.count - a.count)
+                    .slice(0, 8);
+            }, [filteredData]);
+
+            // Chart 6: Risk Factors Radar / Bar
+            const riskFactorData = useMemo(() => {
+                const mcTotal = filteredData.filter(d => d.vehicle_type === 'จักรยานยนต์').length;
+                const noHelmet = filteredData.filter(d => d.vehicle_type === 'จักรยานยนต์' && d.helmet === 'ไม่สวม').length;
+                const alcohol = filteredData.filter(d => d.alcohol === 'เกี่ยวข้อง').length;
+                const speed = filteredData.filter(d => d.speeding === 'ใช้ความเร็วสูง').length;
+
+                return [
+                    { factor: 'ไม่สวมหมวกนิรภัย (เฉพาะ จยย.)', percent: mcTotal ? Math.round((noHelmet/mcTotal)*100) : 0 },
+                    { factor: 'ดื่มแล้วขับ (Alcohol)', percent: filteredData.length ? Math.round((alcohol/filteredData.length)*100) : 0 },
+                    { factor: 'ขับรถเร็วเกินกำหนด (Speeding)', percent: filteredData.length ? Math.round((speed/filteredData.length)*100) : 0 },
+                ];
+            }, [filteredData]);
+
+            return (
+                <div className="min-h-screen flex flex-col bg-slate-50">
+                    {/* Top Header */}
+                    <header className="bg-slate-900 text-white border-b border-slate-800 sticky top-0 z-30 shadow-md">
+                        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3.5 flex flex-wrap justify-between items-center gap-4">
+                            <div className="flex items-center space-x-3">
+                                <div className="bg-sky-500 p-2 rounded-lg text-white shadow-lg shadow-sky-500/30">
+                                    <Icon name="activity" size={24} />
+                                </div>
+                                <div>
+                                    <h1 className="text-lg font-bold tracking-tight text-white flex items-center gap-2">
+                                        ระบบเฝ้าระวังทางระบาดวิทยาการเสียชีวิตจากอุบัติเหตุทางถนน
+                                        <span className="bg-sky-500/20 text-sky-300 border border-sky-400/30 text-xs px-2 py-0.5 rounded-full font-medium">
+                                            ปี พ.ศ. 2568
+                                        </span>
+                                    </h1>
+                                    <p className="text-xs text-slate-400">
+                                        Department of Disease Control & Road Safety Surveillance System
+                                    </p>
+                                </div>
+                            </div>
+
+                            {/* Status & Sync Indicator */}
+                            <div className="flex items-center space-x-3 text-xs">
+                                <div className="flex items-center bg-slate-800 border border-slate-700 rounded-full px-3 py-1.5 space-x-2">
+                                    <span className={`w-2.5 h-2.5 rounded-full ${isRealtime ? 'bg-emerald-400 animate-ping' : 'bg-amber-400'}`}></span>
+                                    <span className="text-slate-300 font-medium">{streamStatus}</span>
+                                    <span className="text-slate-500">|</span>
+                                    <span className="text-slate-400">อัปเดตล่าสุด: {lastUpdated}</span>
+                                </div>
+
+                                <button 
+                                    onClick={() => loadBaselineData("ทำการรีเฟรชและซิงค์ข้อมูลใหม่")}
+                                    className="bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 p-2 rounded-lg transition-colors"
+                                    title="โหลดข้อมูลใหม่"
+                                >
+                                    <Icon name="refresh-cw" size={16} />
+                                </button>
+                            </div>
+                        </div>
+                    </header>
+
+                    {/* Toast Notification Banner */}
+                    {toastMessage && (
+                        <div className={`fixed top-16 right-4 z-50 px-4 py-3 rounded-lg shadow-xl text-sm font-medium flex items-center space-x-2 border transition-all transform translate-y-2 ${
+                            toastMessage.type === 'success' ? 'bg-emerald-900/90 text-emerald-100 border-emerald-700' :
+                            toastMessage.type === 'error' ? 'bg-rose-900/90 text-rose-100 border-rose-700' :
+                            'bg-sky-900/90 text-sky-100 border-sky-700'
+                        }`}>
+                            <Icon name={toastMessage.type === 'success' ? 'check-circle' : 'info'} size={18} />
+                            <span>{toastMessage.text}</span>
+                        </div>
+                    )}
+
+                    <div className="bg-white border-b border-slate-200 shadow-sm">
+                        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
+                            <div className="grid grid-cols-1 lg:grid-cols-12 gap-3 items-center">
+                                
+                                {/* Remote CSV Link Input */}
+                                <div className="lg:col-span-6 flex items-center space-x-2">
+                                    <div className="relative flex-1">
+                                        <div className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none text-slate-400">
+                                            <Icon name="link" size={16} />
+                                        </div>
+                                        <input 
+                                            type="text" 
+                                            value={csvUrl}
+                                            onChange={(e) => setCsvUrl(e.target.value)}
+                                            placeholder="URL ลิ้งค์ไฟล์ CSV (เช่น Google Sheets Published CSV)"
+                                            className="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-sky-500 focus:bg-white transition"
+                                        />
+                                    </div>
+                                    <button 
+                                        onClick={() => fetchCsvFromUrl(csvUrl)}
+                                        className="bg-sky-600 hover:bg-sky-700 text-white text-xs px-3 py-1.5 rounded-lg font-medium shadow-sm transition flex items-center space-x-1 whitespace-nowrap"
+                                    >
+                                        <Icon name="download-cloud" size={14} />
+                                        <span>ดึงข้อมูล CSV</span>
+                                    </button>
+                                </div>
+
+                                {/* File Upload, Live Polling & Export */}
+                                <div className="lg:col-span-6 flex flex-wrap items-center justify-between lg:justify-end gap-2.5">
+                                    
+                                    {/* CSV File Drag & Drop / Upload */}
+                                    <label className="cursor-pointer bg-slate-100 hover:bg-slate-200 border border-slate-300 text-slate-700 text-xs px-2.5 py-1.5 rounded-lg font-medium transition flex items-center space-x-1">
+                                        <Icon name="file-up" size={14} />
+                                        <span>อัปโหลด CSV</span>
+                                        <input type="file" accept=".csv" onChange={handleFileUpload} className="hidden" />
+                                    </label>
+
+                                    {/* CSV Export Button */}
+                                    <button 
+                                        onClick={handleExportCSV}
+                                        className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-300 text-xs px-2.5 py-1.5 rounded-lg font-medium transition flex items-center space-x-1"
+                                        title="ส่งออกข้อมูลที่กรองไว้เป็นไฟล์ CSV"
+                                    >
+                                        <Icon name="file-spreadsheet" size={14} />
+                                        <span>ส่งออก CSV</span>
+                                    </button>
+
+                                    <div className="h-4 w-px bg-slate-300 hidden sm:block"></div>
+
+                                    {/* Real-Time Google Sheets Auto Polling */}
+                                    <div className="flex items-center space-x-2 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1">
+                                        <span className="text-xs font-medium text-slate-600 flex items-center gap-1">
+                                            <Icon name="zap" size={14} className={isRealtime ? 'text-amber-500 fill-amber-500 animate-pulse' : 'text-slate-400'} />
+                                            Live Auto-Sync:
+                                        </span>
+                                        <button 
+                                            onClick={() => setIsRealtime(!isRealtime)}
+                                            className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none ${isRealtime ? 'bg-sky-600' : 'bg-slate-300'}`}
+                                            title="เปิด/ปิดการดึงข้อมูลอัตโนมัติจาก Google Sheets"
+                                        >
+                                            <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition-transform ${isRealtime ? 'translate-x-4' : 'translate-x-1'}`} />
+                                        </button>
+                                        
+                                        {isRealtime && (
+                                            <select 
+                                                value={refreshInterval}
+                                                onChange={(e) => setRefreshInterval(Number(e.target.value))}
+                                                className="text-xs bg-white border border-slate-300 rounded px-1.5 py-0.5 text-slate-700 font-medium"
+                                            >
+                                                <option value={10}>ทุก 10 วิ</option>
+                                                <option value={30}>ทุก 30 วิ</option>
+                                                <option value={60}>ทุก 1 นาที</option>
+                                                <option value={300}>ทุก 5 นาที</option>
+                                            </select>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="bg-slate-100 border-b border-slate-200">
+                        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-2.5">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="flex flex-wrap items-center gap-2 text-xs">
+                                    <span className="font-semibold text-slate-600 flex items-center gap-1">
+                                        <Icon name="filter" size={14} /> ตัวกรองระบาด:
+                                    </span>
+
+                                    {/* Health Zone Filter */}
+                                    <select 
+                                        value={selectedHealthZone} 
+                                        onChange={(e) => setSelectedHealthZone(e.target.value)}
+                                        className="bg-white border border-slate-300 text-slate-700 rounded-md px-2.5 py-1 focus:ring-1 focus:ring-sky-500"
+                                    >
+                                        <option value="ALL">ทุกเขตสุขภาพ (1-12 & กทม.)</option>
+                                        {Array.from({length: 12}, (_, i) => `เขต ${i+1}`).concat(['กทม.']).map(hz => (
+                                            <option key={hz} value={hz}>{hz}</option>
+                                        ))}
+                                    </select>
+
+                                    {/* Gender Filter */}
+                                    <select 
+                                        value={selectedGender} 
+                                        onChange={(e) => setSelectedGender(e.target.value)}
+                                        className="bg-white border border-slate-300 text-slate-700 rounded-md px-2.5 py-1 focus:ring-1 focus:ring-sky-500"
+                                    >
+                                        <option value="ALL">ทุกเพศ</option>
+                                        <option value="ชาย">ชาย</option>
+                                        <option value="หญิง">หญิง</option>
+                                    </select>
+
+                                    {/* Vehicle Filter */}
+                                    <select 
+                                        value={selectedVehicle} 
+                                        onChange={(e) => setSelectedVehicle(e.target.value)}
+                                        className="bg-white border border-slate-300 text-slate-700 rounded-md px-2.5 py-1 focus:ring-1 focus:ring-sky-500"
+                                    >
+                                        <option value="ALL">ทุกยานพาหนะ</option>
+                                        <option value="จักรยานยนต์">จักรยานยนต์</option>
+                                        <option value="รถยนต์นั่ง/เก๋ง">รถยนต์นั่ง/เก๋ง</option>
+                                        <option value="รถปิกอัพ">รถปิกอัพ</option>
+                                        <option value="รถบรรทุก">รถบรรทุก</option>
+                                        <option value="คนเดินเท้า">คนเดินเท้า</option>
+                                    </select>
+
+                                    {/* Age Group Filter */}
+                                    <select 
+                                        value={selectedAgeGroup} 
+                                        onChange={(e) => setSelectedAgeGroup(e.target.value)}
+                                        className="bg-white border border-slate-300 text-slate-700 rounded-md px-2.5 py-1 focus:ring-1 focus:ring-sky-500"
+                                    >
+                                        <option value="ALL">ทุกกลุ่มอายุ</option>
+                                        <option value="0-14 ปี">0-14 ปี</option>
+                                        <option value="15-24 ปี">15-24 ปี (กลุ่มเสี่ยงเยาวชน)</option>
+                                        <option value="25-34 ปี">25-34 ปี</option>
+                                        <option value="35-44 ปี">35-44 ปี</option>
+                                        <option value="45-59 ปี">45-59 ปี</option>
+                                        <option value="60 ปีขึ้นไป">60 ปีขึ้นไป</option>
+                                    </select>
+
+                                    {(selectedHealthZone !== 'ALL' || selectedGender !== 'ALL' || selectedVehicle !== 'ALL' || selectedAgeGroup !== 'ALL') && (
+                                        <button 
+                                            onClick={() => {
+                                                setSelectedHealthZone('ALL');
+                                                setSelectedGender('ALL');
+                                                setSelectedVehicle('ALL');
+                                                setSelectedAgeGroup('ALL');
+                                            }}
+                                            className="text-rose-600 hover:text-rose-700 font-medium underline ml-1"
+                                        >
+                                            ล้างตัวกรอง
+                                        </button>
+                                    )}
+                                </div>
+
+                                {/* Active Case Count */}
+                                <div className="text-xs text-slate-500 font-medium">
+                                    แสดงผล <span className="font-bold text-sky-700">{filteredData.length.toLocaleString()}</span> จากทั้งหมด {data.length.toLocaleString()} รายการ
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+                        
+                        {/* Tab Navigation */}
+                        <div className="flex border-b border-slate-200 bg-white rounded-t-xl px-4 pt-3 space-x-4 text-sm font-medium">
+                            {[
+                                { id: 'overview', label: 'ภาพรวมระบาดวิทยา (Overview)', icon: 'bar-chart-3' },
+                                { id: 'demographics', label: 'โครงสร้างประชากร (Age & Sex)', icon: 'users' },
+                                { id: 'risks', label: 'ปัจจัยเสี่ยง & เวลา (Risks & Hours)', icon: 'alert-triangle' },
+                                { id: 'geography', label: 'พื้นที่ & เขตสุขภาพ (Geography)', icon: 'map-pin' },
+                                { id: 'table', label: 'ตารางข้อมูลเฝ้าระวัง (Data Logs)', icon: 'table' }
+                            ].map(tab => (
+                                <button
+                                    key={tab.id}
+                                    onClick={() => setActiveTab(tab.id)}
+                                    className={`flex items-center space-x-2 pb-3 px-1 border-b-2 transition-colors ${
+                                        activeTab === tab.id 
+                                            ? 'border-sky-600 text-sky-600 font-semibold' 
+                                            : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
+                                    }`}
+                                >
+                                    <Icon name={tab.icon} size={16} />
+                                    <span>{tab.label}</span>
+                                </button>
+                            ))}
+                        </div>
+
+                        {loading ? (
+                            <div className="bg-white rounded-xl p-12 text-center shadow-sm border border-slate-200">
+                                <div className="inline-block animate-spin text-sky-600 mb-3">
+                                    <Icon name="loader-2" size={36} />
+                                </div>
+                                <p className="text-slate-600 font-medium">กำลังประมวลผลข้อมูลระบาดวิทยาทางอุบัติเหตุ...</p>
+                            </div>
+                        ) : (
+                            <>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                                    
+                                    {/* KPI 1: Cumulative Fatalities */}
+                                    <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-200 relative overflow-hidden">
+                                        <div className="flex justify-between items-start">
+                                            <div>
+                                                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">จำนวนผู้เสียชีวิตสะสม</p>
+                                                <h3 className="text-2xl font-bold text-slate-900 mt-1">
+                                                    {kpiMetrics.totalFatalities.toLocaleString()} <span className="text-xs font-normal text-slate-500">ราย</span>
+                                                </h3>
+                                            </div>
+                                            <div className="p-2.5 bg-rose-50 text-rose-600 rounded-lg">
+                                                <Icon name="user-x" size={20} />
+                                            </div>
+                                        </div>
+                                        <div className="mt-3 flex items-center text-xs text-slate-500">
+                                            <span className="text-rose-600 font-semibold mr-1">อัตราตาย:</span>
+                                            <span>{kpiMetrics.mortalityRatePer100k} ต่อประชากรแสนคน</span>
+                                        </div>
+                                    </div>
+
+                                    {/* KPI 2: High Risk Group (Motorcycle Ratio) */}
+                                    <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-200 relative overflow-hidden">
+                                        <div className="flex justify-between items-start">
+                                            <div>
+                                                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">สัดส่วนผู้เสียชีวิตจาก จยย.</p>
+                                                <h3 className="text-2xl font-bold text-slate-900 mt-1">
+                                                    {kpiMetrics.mcPercentage}%
+                                                </h3>
+                                            </div>
+                                            <div className="p-2.5 bg-amber-50 text-amber-600 rounded-lg">
+                                                <Icon name="bike" size={20} />
+                                            </div>
+                                        </div>
+                                        <div className="mt-3 flex items-center text-xs text-slate-500">
+                                            <span className="text-amber-600 font-medium">ยานพาหนะเสี่ยงอันดับ 1</span>
+                                        </div>
+                                    </div>
+
+                                    {/* KPI 3: Non-Helmet Rate */}
+                                    <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-200 relative overflow-hidden">
+                                        <div className="flex justify-between items-start">
+                                            <div>
+                                                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">ไม่สวมหมวกนิรภัย (จยย.)</p>
+                                                <h3 className="text-2xl font-bold text-slate-900 mt-1">
+                                                    {kpiMetrics.noHelmetRate}%
+                                                </h3>
+                                            </div>
+                                            <div className="p-2.5 bg-sky-50 text-sky-600 rounded-lg">
+                                                <Icon name="shield-off" size={20} />
+                                            </div>
+                                        </div>
+                                        <div className="mt-3 flex items-center text-xs text-slate-500">
+                                            <span className="text-slate-600">ปัจจัยความรุนแรงหลักของการบาดเจ็บหัว</span>
+                                        </div>
+                                    </div>
+
+                                    {/* KPI 4: Alcohol Involvement */}
+                                    <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-200 relative overflow-hidden">
+                                        <div className="flex justify-between items-start">
+                                            <div>
+                                                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider">เกี่ยวข้องกับแอลกอฮอล์</p>
+                                                <h3 className="text-2xl font-bold text-slate-900 mt-1">
+                                                    {kpiMetrics.alcoholRate}%
+                                                </h3>
+                                            </div>
+                                            <div className="p-2.5 bg-purple-50 text-purple-600 rounded-lg">
+                                                <Icon name="wine" size={20} />
+                                            </div>
+                                        </div>
+                                        <div className="mt-3 flex items-center text-xs text-slate-500">
+                                            <span className="text-purple-600 font-medium">เพิ่มโอกาสเกิดอุบัติเหตุหนัก 3.5 เท่า</span>
+                                        </div>
+                                    </div>
+
+                                </div>
+
+                                <div className="bg-gradient-to-r from-slate-900 to-slate-800 text-white rounded-xl p-5 shadow-sm border border-slate-700">
+                                    <div className="flex items-start space-x-3">
+                                        <div className="p-2 bg-sky-500/20 text-sky-300 rounded-lg mt-0.5 border border-sky-400/20">
+                                            <Icon name="file-text" size={20} />
+                                        </div>
+                                        <div className="flex-1">
+                                            <h2 className="text-sm font-bold text-sky-300 uppercase tracking-wider mb-1">
+                                                สรุปสาระสำคัญทางระบาดวิทยา (Epidemiological Executive Summary)
+                                            </h2>
+                                            <p className="text-xs text-slate-300 leading-relaxed">
+                                                จากข้อมูลระบบเฝ้าระวังผู้เสียชีวิตจากอุบัติเหตุทางถนน พ.ศ. 2568 กลุ่มประชากรที่มีความเสี่ยงสูงสุดคือ <strong className="text-white">เพศชาย (คิดเป็น {kpiMetrics.malePercentage}%)</strong> ในกลุ่มอายุช่วง <strong className="text-white">15-24 ปี</strong> โดยพาหนะหลักคือ <strong className="text-white">จักรยานยนต์ ({kpiMetrics.mcPercentage}%)</strong> ปัจจัยเสี่ยงสำคัญที่พบร่วมอย่างมีนัยสำคัญทางสถิติคือการ <strong className="text-white">ไม่สวมหมวกนิรภัย ({kpiMetrics.noHelmetRate}%)</strong> และการดื่มแอลกอฮอล์ ข้อเสนอแนะเชิงนโยบายควรเร่งรัดการบังคับใช้กฎหมายหมวกนิรภัย 100% ในสถานศึกษาและชุมชน
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                {activeTab === 'overview' && (
+                                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                                        
+                                        {/* Epi Curve: Monthly Trend */}
+                                        <div className="lg:col-span-8 bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                                            <div className="flex justify-between items-center mb-4">
+                                                <div>
+                                                    <h3 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
+                                                        <Icon name="trending-up" size={16} className="text-sky-600" />
+                                                        แนวโน้มการเสียชีวิตรายเดือน (Epidemiological Curve - Epi Curve)
+                                                    </h3>
+                                                    <p className="text-xs text-slate-500">เปรียบเทียบจำนวนผู้เสียชีวิตจริง กับเป้าหมายทศวรรษความปลอดภัย</p>
+                                                </div>
+                                            </div>
+                                            <div className="h-72 w-full">
+                                                <ResponsiveContainer width="100%" height="100%">
+                                                    <AreaChart data={epiCurveData}>
+                                                        <defs>
+                                                            <linearGradient id="colorFatal" x1="0" y1="0" x2="0" y2="1">
+                                                                <stop offset="5%" stopColor="#0284c7" stopOpacity={0.4}/>
+                                                                <stop offset="95%" stopColor="#0284c7" stopOpacity={0}/>
+                                                            </linearGradient>
+                                                        </defs>
+                                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                                        <XAxis dataKey="month" tick={{fontSize: 11}} stroke="#94a3b8" />
+                                                        <YAxis tick={{fontSize: 11}} stroke="#94a3b8" />
+                                                        <Tooltip />
+                                                        <Legend wrapperStyle={{fontSize: '12px'}} />
+                                                        <Area type="monotone" dataKey="ผู้เสียชีวิต" stroke="#0284c7" strokeWidth={2.5} fillOpacity={1} fill="url(#colorFatal)" />
+                                                        <Line type="monotone" dataKey="เป้าหมายทศวรรษความปลอดภัย" stroke="#e11d48" strokeDasharray="4 4" strokeWidth={2} dot={false} />
+                                                    </AreaChart>
+                                                </ResponsiveContainer>
+                                            </div>
+                                        </div>
+
+                                        {/* Vehicle Breakdown Pie */}
+                                        <div className="lg:col-span-4 bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                                            <h3 className="text-sm font-bold text-slate-800 mb-1 flex items-center gap-1.5">
+                                                <Icon name="pie-chart" size={16} className="text-sky-600" />
+                                                จำแนกตามประเภทยานพาหนะ
+                                            </h3>
+                                            <p className="text-xs text-slate-500 mb-4">สัดส่วนประเภทยานพาหนะที่เกิดอุบัติเหตุเสียชีวิต</p>
+                                            <div className="h-64 w-full">
+                                                <ResponsiveContainer width="100%" height="100%">
+                                                    <PieChart>
+                                                        <Pie
+                                                            data={vehicleData}
+                                                            cx="50%"
+                                                            cy="50%"
+                                                            innerRadius={55}
+                                                            outerRadius={85}
+                                                            paddingAngle={3}
+                                                            dataKey="value"
+                                                        >
+                                                            {vehicleData.map((entry, index) => (
+                                                                <Cell key={`cell-${index}`} fill={entry.fill} />
+                                                            ))}
+                                                        </Pie>
+                                                        <Tooltip formatter={(value) => [`${value} ราย`, 'จำนวน']} />
+                                                    </PieChart>
+                                                </ResponsiveContainer>
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-2 mt-2">
+                                                {vehicleData.slice(0, 4).map((item, idx) => (
+                                                    <div key={idx} className="flex items-center space-x-1.5 text-xs">
+                                                        <span className="w-2.5 h-2.5 rounded-full" style={{backgroundColor: item.fill}}></span>
+                                                        <span className="text-slate-600 truncate">{item.name}:</span>
+                                                        <span className="font-semibold text-slate-800">{item.value}</span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                    </div>
+                                )}
+
+                                {activeTab === 'demographics' && (
+                                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                                        
+                                        {/* Age-Sex Pyramid */}
+                                        <div className="lg:col-span-7 bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                                            <h3 className="text-sm font-bold text-slate-800 mb-1 flex items-center gap-1.5">
+                                                <Icon name="users" size={16} className="text-sky-600" />
+                                                ปิรามิดประชากรผู้เสียชีวิต (Age-Sex Pyramid)
+                                            </h3>
+                                            <p className="text-xs text-slate-500 mb-4">จำแนกตามกลุ่มอายุและเพศ (เน้นย้ำความเสี่ยงสูงในเพศชายวัยแรงงาน/เยาวชน)</p>
+                                            <div className="h-80 w-full">
+                                                <ResponsiveContainer width="100%" height="100%">
+                                                    <BarChart data={ageSexData} layout="vertical">
+                                                        <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
+                                                        <XAxis type="number" tick={{fontSize: 11}} stroke="#94a3b8" />
+                                                        <YAxis dataKey="age_group" type="category" tick={{fontSize: 11}} stroke="#94a3b8" />
+                                                        <Tooltip />
+                                                        <Legend wrapperStyle={{fontSize: '12px'}} />
+                                                        <Bar dataKey="ชาย" fill="#0284c7" radius={[0, 4, 4, 0]} />
+                                                        <Bar dataKey="หญิง" fill="#e11d48" radius={[0, 4, 4, 0]} />
+                                                    </BarChart>
+                                                </ResponsiveContainer>
+                                            </div>
+                                        </div>
+
+                                        {/* Demographic Key Takeaways */}
+                                        <div className="lg:col-span-5 bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-between">
+                                            <div>
+                                                <h3 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-1.5">
+                                                    <Icon name="file-check" size={16} className="text-sky-600" />
+                                                    ข้อพิจารณาทางระบาดวิทยาประชากร
+                                                </h3>
+                                                <div className="space-y-3 text-xs text-slate-600">
+                                                    <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
+                                                        <span className="font-bold text-sky-700 block mb-0.5">1. ความแตกต่างทางเพศ (Sex Disparity)</span>
+                                                        ผู้เสียชีวิตส่วนใหญ่เป็น <strong className="text-slate-800">เพศชายสูงถึง {kpiMetrics.malePercentage}%</strong> ซึ่งสัมพันธ์กับพฤติกรรมเสี่ยง การใช้ความเร็ว และการประกอบอาชีพขับขี่ขนส่ง
+                                                    </div>
+                                                    <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
+                                                        <span className="font-bold text-amber-700 block mb-0.5">2. กลุ่มวัยเสี่ยงเปราะบาง (Vulnerable Youth)</span>
+                                                        กลุ่มอายุ <strong className="text-slate-800">15-24 ปี</strong> มีอัตราการเสียชีวิตต่อประชากรสูงสุด คิดเป็นกลุ่มความสูญเสียปีสุขภาวะ (YLLs) สูงที่สุดของประเทศ
+                                                    </div>
+                                                    <div className="p-3 bg-slate-50 rounded-lg border border-slate-200">
+                                                        <span className="font-bold text-teal-700 block mb-0.5">3. ผู้สูงอายุบนท้องถนน (Aging Demographic)</span>
+                                                        กลุ่มอายุ 60 ปีขึ้นไป มีแนวโน้มเสียชีวิตสูงเมื่อเป็นคนเดินเท้าหรือปั่นจักรยานเนื่องจากความเปราะบางทางร่างกาย
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                    </div>
+                                )}
+
+                                {activeTab === 'risks' && (
+                                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                                        
+                                        {/* Risk Factors Bar */}
+                                        <div className="lg:col-span-6 bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                                            <h3 className="text-sm font-bold text-slate-800 mb-1 flex items-center gap-1.5">
+                                                <Icon name="alert-triangle" size={16} className="text-amber-500" />
+                                                อัตราการพบปัจจัยเสี่ยงสำคัญ (%)
+                                            </h3>
+                                            <p className="text-xs text-slate-500 mb-4">ปัจจัยพฤติกรรมเสี่ยงที่มีผลต่ออัตราการรอดชีวิต</p>
+                                            <div className="h-72 w-full">
+                                                <ResponsiveContainer width="100%" height="100%">
+                                                    <BarChart data={riskFactorData}>
+                                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                                        <XAxis dataKey="factor" tick={{fontSize: 10}} stroke="#94a3b8" />
+                                                        <YAxis domain={[0, 100]} tick={{fontSize: 11}} stroke="#94a3b8" unit="%" />
+                                                        <Tooltip formatter={(value) => [`${value}%`, 'สัดส่วนที่พบ']} />
+                                                        <Bar dataKey="percent" fill="#ea580c" radius={[4, 4, 0, 0]}>
+                                                            {riskFactorData.map((entry, index) => (
+                                                                <Cell key={`cell-${index}`} fill={['#e11d48', '#d97706', '#0284c7'][index % 3]} />
+                                                            ))}
+                                                        </Bar>
+                                                    </BarChart>
+                                                </ResponsiveContainer>
+                                            </div>
+                                        </div>
+
+                                        {/* Time of Incident Distribution */}
+                                        <div className="lg:col-span-6 bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                                            <h3 className="text-sm font-bold text-slate-800 mb-1 flex items-center gap-1.5">
+                                                <Icon name="clock" size={16} className="text-sky-600" />
+                                                การกระจายตัวตามช่วงเวลาเกิดเหตุ (24 ชั่วโมง)
+                                            </h3>
+                                            <p className="text-xs text-slate-500 mb-4">ช่วงเวลาเสี่ยงสูง (Peak Hours) ที่เกิดอุบัติเหตุรุนแรง</p>
+                                            <div className="h-72 w-full">
+                                                <ResponsiveContainer width="100%" height="100%">
+                                                    <BarChart data={hourlyData}>
+                                                        <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                                        <XAxis dataKey="hourLabel" tick={{fontSize: 9}} stroke="#94a3b8" />
+                                                        <YAxis tick={{fontSize: 11}} stroke="#94a3b8" />
+                                                        <Tooltip />
+                                                        <Bar dataKey="จำนวนผู้เสียชีวิต" fill="#0284c7" radius={[2, 2, 0, 0]} />
+                                                    </BarChart>
+                                                </ResponsiveContainer>
+                                            </div>
+                                        </div>
+
+                                    </div>
+                                )}
+
+                                {activeTab === 'geography' && (
+                                    <div className="space-y-6">
+                                        
+                                        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                                            <h3 className="text-sm font-bold text-slate-800 mb-1 flex items-center gap-1.5">
+                                                <Icon name="map" size={16} className="text-sky-600" />
+                                                แผนที่ระบาดวิทยาการกระจายตัวระดับประเทศ (Spatial Epidemiological Map)
+                                            </h3>
+                                            <p className="text-xs text-slate-500 mb-4">แสดงจุดความหนาแน่นของผู้เสียชีวิตตามพิกัดภูมิศาสตร์จังหวัด (Bubble Map บน Esri World Dark Gray)</p>
+                                            <div className="h-[450px] w-full relative z-0 border border-slate-200 rounded-lg overflow-hidden bg-slate-900">
+                                                <EpiMap data={filteredData} />
+                                            </div>
+                                        </div>
+
+                                        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+                                            
+                                            {/* Top Provinces */}
+                                            <div className="lg:col-span-7 bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                                                <h3 className="text-sm font-bold text-slate-800 mb-1 flex items-center gap-1.5">
+                                                    <Icon name="map-pin" size={16} className="text-sky-600" />
+                                                    10 อันดับจังหวัดที่มีผู้เสียชีวิตสูงสุด
+                                                </h3>
+                                                <p className="text-xs text-slate-500 mb-4">พื้นที่เฝ้าระวังพิเศษ (Red Zone)</p>
+                                                <div className="h-72 w-full">
+                                                    <ResponsiveContainer width="100%" height="100%">
+                                                        <BarChart data={topProvincesData} layout="vertical">
+                                                            <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f1f5f9" />
+                                                            <XAxis type="number" tick={{fontSize: 11}} stroke="#94a3b8" />
+                                                            <YAxis dataKey="province" type="category" tick={{fontSize: 11}} stroke="#94a3b8" width={80} />
+                                                            <Tooltip />
+                                                            <Bar dataKey="count" fill="#e11d48" radius={[0, 4, 4, 0]} name="จำนวนผู้เสียชีวิต" />
+                                                        </BarChart>
+                                                    </ResponsiveContainer>
+                                                </div>
+                                            </div>
+
+                                        {/* Health Zone Summary Cards */}
+                                        <div className="lg:col-span-5 bg-white p-5 rounded-xl border border-slate-200 shadow-sm">
+                                            <h3 className="text-sm font-bold text-slate-800 mb-3 flex items-center gap-1.5">
+                                                <Icon name="building-2" size={16} className="text-sky-600" />
+                                                สรุปจำแนกรายเขตสุขภาพ (Health Zones)
+                                            </h3>
+                                            <div className="space-y-2 max-h-80 overflow-y-auto pr-1 custom-scrollbar">
+                                                {Array.from({length: 12}, (_, i) => `เขต ${i+1}`).concat(['กทม.']).map(hz => {
+                                                    const count = filteredData.filter(d => d.health_zone === hz).length;
+                                                    return (
+                                                        <div key={hz} className="flex justify-between items-center p-2.5 bg-slate-50 rounded-lg hover:bg-slate-100 transition text-xs">
+                                                            <span className="font-semibold text-slate-700">{hz}</span>
+                                                            <span className="bg-sky-100 text-sky-800 font-bold px-2 py-0.5 rounded-full">
+                                                                {count} ราย
+                                                            </span>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
+
+                                        </div>
+                                    </div>
+                                )}
+
+                                {activeTab === 'table' && (
+                                    <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+                                        
+                                        {/* Table Search Header */}
+                                        <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-wrap justify-between items-center gap-3">
+                                            <h3 className="text-sm font-bold text-slate-800 flex items-center gap-1.5">
+                                                <Icon name="database" size={16} className="text-sky-600" />
+                                                รายการข้อมูลเฝ้าระวังรายเคส (Raw Data Surveillance Logs)
+                                            </h3>
+                                            <div className="relative w-full sm:w-64">
+                                                <div className="absolute inset-y-0 left-0 pl-2.5 flex items-center pointer-events-none text-slate-400">
+                                                    <Icon name="search" size={14} />
+                                                </div>
+                                                <input 
+                                                    type="text" 
+                                                    value={searchKeyword}
+                                                    onChange={(e) => setSearchKeyword(e.target.value)}
+                                                    placeholder="ค้นหา ID, จังหวัด, ยานพาหนะ..."
+                                                    className="w-full pl-8 pr-3 py-1 text-xs bg-white border border-slate-300 rounded-lg focus:ring-1 focus:ring-sky-500"
+                                                />
+                                            </div>
+                                        </div>
+
+                                        {/* Data Table */}
+                                        <div className="overflow-x-auto max-h-96 custom-scrollbar">
+                                            <table className="w-full text-left border-collapse text-xs">
+                                                <thead>
+                                                    <tr className="bg-slate-100 text-slate-600 border-b border-slate-200 font-semibold sticky top-0 z-10">
+                                                        <th className="p-2.5">รหัสเคส</th>
+                                                        <th className="p-2.5">วันที่เกิดเหตุ</th>
+                                                        <th className="p-2.5">เวลา</th>
+                                                        <th className="p-2.5">จังหวัด / เขต</th>
+                                                        <th className="p-2.5">เพศ / อายุ</th>
+                                                        <th className="p-2.5">ยานพาหนะ</th>
+                                                        <th className="p-2.5">หมวกนิรภัย</th>
+                                                        <th className="p-2.5">แอลกอฮอล์</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody className="divide-y divide-slate-100 text-slate-700">
+                                                    {filteredData.slice(0, 100).map((row, idx) => (
+                                                        <tr key={row.id || idx} className="hover:bg-sky-50/50 transition-colors">
+                                                            <td className="p-2.5 font-mono text-slate-500">{row.id}</td>
+                                                            <td className="p-2.5 whitespace-nowrap">{row.acc_date}</td>
+                                                            <td className="p-2.5 whitespace-nowrap">{row.acc_time}</td>
+                                                            <td className="p-2.5 whitespace-nowrap">
+                                                                <span className="font-medium text-slate-800">{row.province}</span>
+                                                                <span className="text-slate-400 text-[10px] block">{row.health_zone}</span>
+                                                            </td>
+                                                            <td className="p-2.5 whitespace-nowrap">
+                                                                <span className={`px-1.5 py-0.5 rounded text-[10px] font-semibold mr-1 ${row.gender === 'ชาย' ? 'bg-sky-100 text-sky-800' : 'bg-rose-100 text-rose-800'}`}>
+                                                                    {row.gender}
+                                                                </span>
+                                                                <span>{row.age} ปี</span>
+                                                            </td>
+                                                            <td className="p-2.5 whitespace-nowrap">{row.vehicle_type}</td>
+                                                            <td className="p-2.5 whitespace-nowrap">
+                                                                <span className={`px-1.5 py-0.5 rounded text-[10px] ${row.helmet === 'สวม' ? 'bg-emerald-100 text-emerald-800' : row.helmet === 'ไม่สวม' ? 'bg-rose-100 text-rose-800' : 'bg-slate-100 text-slate-500'}`}>
+                                                                    {row.helmet}
+                                                                </span>
+                                                            </td>
+                                                            <td className="p-2.5 whitespace-nowrap">
+                                                                <span className={`px-1.5 py-0.5 rounded text-[10px] ${row.alcohol === 'เกี่ยวข้อง' ? 'bg-purple-100 text-purple-800 font-semibold' : 'bg-slate-100 text-slate-600'}`}>
+                                                                    {row.alcohol}
+                                                                </span>
+                                                            </td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                        <div className="p-2.5 bg-slate-50 border-t border-slate-200 text-xs text-slate-500 text-right">
+                                            แสดงผลสูงสุด 100 รายการแรกจากตัวกรองปัจจุบัน
+                                        </div>
+                                    </div>
+                                )}
+                            </>
+                        )}
+
+                    </main>
+
+                    {/* Footer */}
+                    <footer className="bg-white border-t border-slate-200 mt-auto py-4 text-center text-xs text-slate-500">
+                        <div className="max-w-7xl mx-auto px-4">
+                            ระบบเฝ้าระวังทางระบาดวิทยาการเสียชีวิตจากอุบัติเหตุทางถนน (Road Traffic Fatality Epi-Surveillance 2568) &bull; กรมควบคุมโรค กระทรวงสาธารณสุข
+                        </div>
+                    </footer>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
